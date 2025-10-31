@@ -367,7 +367,7 @@ if st.button("EXTRACT FIELD", type="primary"):
 
         poller = client.begin_analyze_document(
             model_id="prebuilt-invoice",
-            document=uploaded_file.read()
+            body=uploaded_file.read()
         )
         result = poller.result()
         field_index = build_field_index(result)
