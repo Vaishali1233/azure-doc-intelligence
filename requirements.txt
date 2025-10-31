@@ -1,0 +1,6 @@
+streamlit
+azure-ai-documentintelligence
+azure-core
+python-dotenv
+pillow
+requests
