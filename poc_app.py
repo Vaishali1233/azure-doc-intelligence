@@ -20,7 +20,7 @@ col1, col2 = st.columns([3, 1])
 with col1:
     uploaded_file = st.file_uploader("Upload PDF invoice", type="pdf")
 with col2:
-    field_name = st.text_input("Field Name", placeholder="VendorName", value="VendorName")
+    field_name = st.text_input("Field Name", placeholder="Enter a field to search")
 
 
 def get_center_x(polygon):
