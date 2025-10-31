@@ -6,32 +6,23 @@ from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 
-# ==========================
-# PAGE CONFIG
-# ==========================
 st.set_page_config(page_title="Doc Intel", layout="wide")
 st.title("Azure AI Document Intelligence – Smart Invoice Parser")
 
-# ==========================
-# SIDEBAR: CREDENTIALS
-# ==========================
+
 with st.sidebar:
     st.header("Azure Credentials")
     endpoint = st.text_input("Endpoint", type="password")
     api_key = st.text_input("API Key", type="password")
 
-# ==========================
-# INPUTS
-# ==========================
+
 col1, col2 = st.columns([3, 1])
 with col1:
     uploaded_file = st.file_uploader("Upload PDF invoice", type="pdf")
 with col2:
     field_name = st.text_input("Field Name", placeholder="VendorName", value="VendorName")
 
-# ==========================
-# HELPER FUNCTIONS
-# ==========================
+
 def get_center_x(polygon):
     if not polygon:
         return None
@@ -40,13 +31,11 @@ def get_center_x(polygon):
 
 
 def extract_tables_with_key_as_header(result) -> List[Dict[str, Any]]:
-    """Extract tables where headers are in row 0 and values in subsequent rows."""
     tables_data = []
     for table in getattr(result, "tables", []):
         if table.row_count < 2:
             continue
 
-        # Headers from row 0
         header_cells = sorted(
             [c for c in table.cells if c.row_index == 0],
             key=lambda x: x.column_index
@@ -60,7 +49,6 @@ def extract_tables_with_key_as_header(result) -> List[Dict[str, Any]]:
                 "col_idx": cell.column_index
             })
 
-        # Data rows (row_index >= 1)
         data_rows = []
         for row_idx in range(1, table.row_count):
             row_cells = sorted(
@@ -90,7 +78,6 @@ def extract_tables_with_key_as_header(result) -> List[Dict[str, Any]]:
 
 
 def extract_transaction_fees(result) -> Dict[str, float]:
-    """Extract T1–T6 and G1–G6 fees from header-row tables."""
     fees = {}
     pattern = re.compile(r"Transaction Fee [TG][1-6]", re.IGNORECASE)
     
@@ -113,7 +100,6 @@ def extract_transaction_fees(result) -> Dict[str, float]:
 
 
 def extract_totals_section(result) -> Dict[str, str]:
-    """Extract VAT, Gross Amount, and Total from document text."""
     totals = {}
     lines = [line.strip() for line in (result.content or "").split("\n") if line.strip()]
     
@@ -142,17 +128,14 @@ def extract_totals_section(result) -> Dict[str, str]:
 def find_field_smart(result, field_name: str, field_index: Dict[str, str]):
     target = field_name.strip().lower()
 
-    # 1. Exact match (case-insensitive)
     for k, v in field_index.items():
         if k == target:
             return k, v
 
-    # 2. Partial match (e.g. "T1" in "Transaction Fee T1")
     for k, v in field_index.items():
         if target.replace(" ", "") in k.replace(" ", ""):
             return k, v
 
-    # 3. Fallbacks (prebuilt, KV, etc.) — keep only if needed
     doc = result.documents[0] if result.documents else None
 
     if doc and doc.fields:
@@ -162,7 +145,7 @@ def find_field_smart(result, field_name: str, field_index: Dict[str, str]):
                 if val is not None:
                     return fname, str(val) if not isinstance(val, (dict, list)) else json.dumps(val)
 
-    # 2. Key-value pairs
+
     all_kvs = (getattr(doc, "key_value_pairs", []) or []) + (getattr(result, "key_value_pairs", []) or [])
     for kv in all_kvs:
         if not kv.key or not kv.value:
@@ -172,7 +155,6 @@ def find_field_smart(result, field_name: str, field_index: Dict[str, str]):
         if key == target or target in key:
             return kv.key.content.strip(), val
 
-    # 3. Table: Key in row N, value in row N+1
     for table in getattr(result, "tables", []):
         if table.row_count < 2:
             continue
@@ -185,14 +167,12 @@ def find_field_smart(result, field_name: str, field_index: Dict[str, str]):
                     if col_idx < len(val_cells):
                         return key_cell.content.strip(), val_cells[col_idx].content.strip()
 
-    # 4. Transaction fees
     if "transaction fee" in target:
         fees = extract_transaction_fees(result)
         for k, v in fees.items():
             if target.replace(" ", "") in k.lower().replace(" ", ""):
                 return k, f"{v:.2f} €"
 
-    # 5. Totals section
     if any(x in target for x in ["vat", "gross", "total"]):
         totals = extract_totals_section(result)
         if "vat" in target and "VAT 19%" in totals:
@@ -202,7 +182,6 @@ def find_field_smart(result, field_name: str, field_index: Dict[str, str]):
         if "total" in target and "Total" in totals:
             return "Total", totals["Total"]
 
-    # 6. Fallback: line-based search
     lines = [l.strip() for l in (result.content or "").split("\n") if l.strip()]
     for i, line in enumerate(lines):
         if target in line.lower():
@@ -220,18 +199,13 @@ def find_field_smart(result, field_name: str, field_index: Dict[str, str]):
 
 
 def build_field_index(result) -> Dict[str, str]:
-    """
-    Robust index: collects all occurrences of a key and picks the best value.
-    """
+
     from collections import defaultdict
 
     candidates: Dict[str, List[str]] = defaultdict(list)
 
     doc = result.documents[0] if result.documents else None
 
-    # --------------------------------------------------------------
-    # 1. Pre-built fields
-    # --------------------------------------------------------------
     if doc and doc.fields:
         for fname, fval in doc.fields.items():
             val = getattr(fval, "value", None)
@@ -239,9 +213,6 @@ def build_field_index(result) -> Dict[str, str]:
                 v = str(val) if not isinstance(val, (dict, list)) else json.dumps(val)
                 candidates[fname.lower()].append(v)
 
-    # --------------------------------------------------------------
-    # 2. Key-Value pairs
-    # --------------------------------------------------------------
     all_kvs = (getattr(doc, "key_value_pairs", []) or []) + (getattr(result, "key_value_pairs", []) or [])
     for kv in all_kvs:
         if not kv.key or not kv.value:
@@ -251,9 +222,6 @@ def build_field_index(result) -> Dict[str, str]:
         if k:
             candidates[k.lower()].append(v)
 
-    # --------------------------------------------------------------
-    # 3. Tables → records
-    # --------------------------------------------------------------
     for table in getattr(result, "tables", []):
         for rec in table_to_records(table):
             for raw_key, raw_val in rec.items():
@@ -269,18 +237,13 @@ def build_field_index(result) -> Dict[str, str]:
                 if key and val:
                     candidates[key.lower()].append(val)
 
-    # --------------------------------------------------------------
-    # 4. Pick best value for each key
-    # --------------------------------------------------------------
     index: Dict[str, str] = {}
     for key, values in candidates.items():
-        # Remove empty or just ":"
         clean_vals = [v for v in values if v and v not in [":", ":", "T1:", "T2:", "..."]]
 
         if not clean_vals:
             continue
 
-        # Prefer: contains "€" or number
         currency_vals = [v for v in clean_vals if "€" in v]
         number_vals = [v for v in clean_vals if re.search(r'\d', v)]
 
@@ -290,25 +253,17 @@ def build_field_index(result) -> Dict[str, str]:
         elif number_vals:
             best = number_vals[0]
         else:
-            best = clean_vals[0]  # fallback
+            best = clean_vals[0] 
 
         index[key] = best
 
     return index
 
 def table_to_records(table) -> List[Dict[str, str]]:
-    """
-    Robust table -> records conversion handling:
-      - header row (row 0) -> columns
-      - header column (col 0) -> keys
-      - mixed / sparse / merged cells
-    Returns a list of dicts (records).
-    """
     if table.row_count < 1 or table.column_count < 1:
         return []
 
-    # 1) Build grid with safe spans
-    grid = {}  # (r,c) -> text
+    grid = {}
     max_r = table.row_count
     max_c = table.column_count
     for cell in table.cells:
@@ -320,15 +275,12 @@ def table_to_records(table) -> List[Dict[str, str]]:
 
         for rr in range(row_idx, row_idx + row_span):
             for cc in range(col_idx, col_idx + col_span):
-                # if a target slot already has text, append (preserve multiple pieces)
                 prev = grid.get((rr, cc), "")
                 grid[(rr, cc)] = (prev + (" | " + txt) if prev and txt else (txt or prev))
 
-    # convenience helpers
     def cell_text(r, c):
         return grid.get((r, c), "").strip()
 
-    # 2) Heuristic: detect orientation
     first_row_texts = [cell_text(0, c) for c in range(0, max_c)]
     first_col_texts = [cell_text(r, 0) for r in range(0, max_r)]
 
@@ -336,15 +288,11 @@ def table_to_records(table) -> List[Dict[str, str]]:
         s = s or ""
         if "€" in s or "$" in s: 
             return True
-        # treat numbers that contain digits (allow commas/dots)
         return bool(re.search(r"\d", s))
 
     row_numeric = sum(1 for t in first_row_texts if looks_numeric(t))
     col_numeric = sum(1 for t in first_col_texts if looks_numeric(t))
 
-    # If first column is mostly non-numeric and first row mostly numeric -> column-keys
-    # If first row has many non-numeric tokens and first col has many numeric -> row-headers
-    # fallback: if first_row has more non-empty cells than first_col -> treat as row headers
     nonempty_row = sum(1 for t in first_row_texts if t)
     nonempty_col = sum(1 for t in first_col_texts if t)
 
@@ -353,7 +301,6 @@ def table_to_records(table) -> List[Dict[str, str]]:
     elif nonempty_row >= nonempty_col and row_numeric < nonempty_row/2:
         left_is_key = False
     else:
-        # fallback using simple heuristic: if first row has text that looks like headers (short words) treat as row headers
         if nonempty_row >= nonempty_col:
             left_is_key = False
         else:
@@ -361,7 +308,6 @@ def table_to_records(table) -> List[Dict[str, str]]:
 
     records: List[Dict[str, str]] = []
 
-    # 3) Mode A: row-headers (row 0 contains header names)
     if not left_is_key:
         headers = [cell_text(0, c) or f"col_{c}" for c in range(0, max_c)]
         for r in range(1, max_r):
@@ -376,8 +322,6 @@ def table_to_records(table) -> List[Dict[str, str]]:
                 records.append(row)
         return records
 
-    # 4) Mode B: column-keys (col 0 contains keys; values across columns)
-    # If there is a header row (row 0) besides col 0, use headers for value columns.
     has_header_row = any(cell_text(0, c) for c in range(1, max_c))
     value_headers = [cell_text(0, c) or f"col_{c}" for c in range(0, max_c)] if has_header_row else None
 
@@ -385,7 +329,6 @@ def table_to_records(table) -> List[Dict[str, str]]:
         key = cell_text(r, 0)
         if not key:
             continue
-        # gather values in this row across columns 1..max_c-1
         row = {}
         empty = True
         for c in range(1, max_c):
@@ -399,23 +342,17 @@ def table_to_records(table) -> List[Dict[str, str]]:
             row[header_name] = v
             empty = False
         if not empty:
-            # represent the record as { key_name: { header1: val1, ... } } or flatten as key->value for single-column tables
-            # Flatten: if only one value column, map key -> that value
             if len(row) == 1:
                 single_val = next(iter(row.values()))
                 records.append({key: single_val})
             else:
-                # prefix keys with the row-key to avoid collisions when building field index
                 flat = {k: v for k, v in row.items()}
-                # also include the original key name itself so field_index can pick it
                 flat_key = key
                 flat["__row_key"] = flat_key
-                records.append({flat_key: flat})  # note: caller should handle nested dict if present
+                records.append({flat_key: flat})
     return records
 
-# ==========================
-# MAIN EXTRACTION
-# ==========================
+
 if st.button("EXTRACT FIELD", type="primary"):
     if not endpoint or not api_key or not uploaded_file or not field_name:
         st.error("Please provide Endpoint, API Key, PDF, and Field Name.")
@@ -432,40 +369,13 @@ if st.button("EXTRACT FIELD", type="primary"):
             analyze_request=AnalyzeDocumentRequest(bytes_source=uploaded_file.read())
         )
         result = poller.result()
-
-        # ----------------------------------------------------------
-        # 1. GLOBAL FIELD INDEX (once)
-        # ----------------------------------------------------------
         field_index = build_field_index(result)
 
-        # ----------------------------------------------------------
-        # 2. DISPLAY ALL TABLES (nice view, optional)
-        # ----------------------------------------------------------
-        with st.expander("All Tables (normalised)", expanded=False):
-            all_records = []
-            for i, table in enumerate(getattr(result, "tables", []), 1):
-                recs = table_to_records(table)
-                if recs:
-                    st.write(f"**Table {i}**")
-                    st.table(recs)
-                    all_records.extend(recs)
-            if not all_records:
-                st.info("No tables detected.")
-
-        # ----------------------------------------------------------
-        # 3. SMART FIELD EXTRACTION
-        # ----------------------------------------------------------
         found_key, found_value = find_field_smart(result, field_name, field_index)
         if found_key:
             st.success(f"**{found_key}** → `{found_value}`")
         else:
             st.warning(f"Field **'{field_name}'** not found.")
-
-        # ----------------------------------------------------------
-        # 4. (optional) raw line items – now uses the same logic
-        # ----------------------------------------------------------
-        with st.expander("Raw Line Items (All Tables)", expanded=False):
-            st.json(all_records if all_records else "No line items extracted.")
 
     except Exception as e:
         st.error(f"Error: {e}")
