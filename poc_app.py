@@ -4,7 +4,6 @@ import re
 from typing import Dict, List, Any, Optional
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
-from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 
 st.set_page_config(page_title="Doc Intel", layout="wide")
 st.title("Azure AI Document Intelligence – Smart Invoice Parser")
