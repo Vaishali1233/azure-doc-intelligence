@@ -9,11 +9,13 @@ from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 st.set_page_config(page_title="Doc Intel", layout="wide")
 st.title("Azure AI Document Intelligence – Smart Invoice Parser")
 
+import os
+endpoint = os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT")
+api_key = os.getenv("AZURE_DOC_INTELLIGENCE_KEY")
 
-with st.sidebar:
-    st.header("Azure Credentials")
-    endpoint = st.text_input("Endpoint", type="password")
-    api_key = st.text_input("API Key", type="password")
+if not endpoint or not api_key:
+    st.error("Azure Document Intelligence endpoint or key not set in environment variables.")
+    st.stop()
 
 
 col1, col2 = st.columns([3, 1])
