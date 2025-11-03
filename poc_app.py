@@ -7,7 +7,7 @@ from azure.ai.documentintelligence import DocumentIntelligenceClient
 
 st.set_page_config(page_title="Doc Intel", layout="wide")
 st.title("Azure AI Document Intelligence – Smart Invoice Parser")
-
+import base64
 import os
 endpoint = os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT")
 api_key = os.getenv("AZURE_DOC_INTELLIGENCE_KEY")
@@ -260,6 +260,37 @@ def build_field_index(result) -> Dict[str, str]:
 
     return index
 
+def extract_invoice_detail_rows(result):
+    all_records = []
+    for table in getattr(result, "tables", []):
+        headers = []
+        max_r = table.row_count
+        max_c = table.column_count
+        
+        def cell_text(r, c):
+            for cell in table.cells:
+                if cell.row_index == r and cell.column_index == c:
+                    return (cell.content or "").strip()
+            return ""
+
+        headers = [cell_text(0, c) for c in range(max_c)]
+
+        header_keywords = ["t1","query","amount","transaction","fee"]
+        if not any(any(k in h.lower() for k in header_keywords) for h in headers if h):
+            continue
+
+        for r in range(1, max_r):
+            row = {}
+            empty_row = True
+            for c in range(max_c):
+                val = cell_text(r, c)
+                if val:
+                    row[headers[c] or f"col_{c}"] = val
+                    empty_row = False
+            if not empty_row:
+                all_records.append(row)
+    return all_records
+
 def table_to_records(table) -> List[Dict[str, str]]:
     if table.row_count < 1 or table.column_count < 1:
         return []
@@ -365,11 +396,15 @@ if st.button("EXTRACT FIELD", type="primary"):
             credential=AzureKeyCredential(api_key)
         )
 
+        pdf_bytes = uploaded_file.read()
+        pdf_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
+
         poller = client.begin_analyze_document(
             model_id="prebuilt-invoice",
-            body=uploaded_file.read()
+            analyze_request={"base64Source": pdf_b64}
         )
         result = poller.result()
+        st.session_state["analysis_result"] = result
         field_index = build_field_index(result)
 
         found_key, found_value = find_field_smart(result, field_name, field_index)
@@ -381,3 +416,14 @@ if st.button("EXTRACT FIELD", type="primary"):
     except Exception as e:
         st.error(f"Error: {e}")
         st.exception(e)
+
+if st.button("Show Invoice Detail Rows"):
+    result = st.session_state.get("analysis_result", None)
+    if not result:
+        st.warning("Analyze a file first.")
+    else:
+        invoice_rows = extract_invoice_detail_rows(result)
+        if invoice_rows:
+            st.dataframe(invoice_rows)
+        else:
+            st.info("No invoice details table found.")
